@@ -187,6 +187,50 @@ async function startBot() {
         }
     });
 
+    // ================= WELCOME / GOODBYE HANDLER =================
+
+sock.ev.on("group-participants.update", async (update) => {
+	try {
+		const groupJid = update.id;
+		const participants = update.participants; // array of JIDs
+		const action = update.action; // "add", "remove", "promote", etc.
+
+		if (action !== "add") return; // only welcome on join
+
+		for (const user of participants) {
+			const userJid = user.includes("@") ? user : `${user}@s.whatsapp.net`;
+			const username = userJid.split("@")[0];
+
+			const welcomeText = 
+`⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
+
+Welcome @${username} 👑  
+Another brave soul has joined the chaos! 🗿
+
+Drop your favorite emoji to show your current mood 😈  
+And don’t forget to introduce yourself:
+
+📝 *Introduction Form:*
+• Name:
+• Age:
+• Favorite anime:
+• Favorite character:
+
+💥 Prepare for memes, chaos, debates, and legendary moments.
+⚔️ *Welcome to the battlefield!*`;
+
+			await sock.sendMessage(groupJid, {
+				text: welcomeText,
+				mentions: [userJid]
+			});
+		}
+
+	} catch (err) {
+		console.error("WELCOME ERROR:", err);
+	}
+});
+
+
     function normalizeJid(jid) {
     if (!jid) return jid;
     return jid.split(":")[0].replace(/@.+/, "") + "@s.whatsapp.net";
