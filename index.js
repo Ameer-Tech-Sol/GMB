@@ -222,20 +222,21 @@ sock.ev.on("group-participants.update", async (update) => {
 			const welcomeText =
 `⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
 
-Welcome @${username} 👑  
-Another brave soul has joined the chaos! 🗿
+💥 *@${mention} has entered the battlefield!* 💥
 
-Drop your favorite emoji to show your current mood 😈  
-And don’t forget to introduce yourself:
+⚔️ The gates have opened… chaos has increased… legends are watching… 😈🔥
+You’ve officially stepped into the arena. No turning back now.
 
-📝 *Intro for the battlefield:*
-• Name:
-• Age:
-• Favorite anime:
-• Favorite character:
+Before you vanish into the madness, present yourself, warrior:
 
-💥 Prepare for memes, chaos, debates, and legendary moments.
-⚔️ *Welcome to the battlefield!*`;
+📝 *Name:*
+🎂 *Age:*
+🍥 *Favorite Anime:*
+👑 *Favorite Character:*
+
+😎 *Drop your favorite emoji to show your current power level!*
+
+⚔️ _Choose your side wisely… waifu wars are not for the weak._ 😏🔥`;
 
 			// Send message and mention the new warrior so WA shows the name
 			await sock.sendMessage(groupJid, {
