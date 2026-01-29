@@ -187,48 +187,67 @@ async function startBot() {
         }
     });
 
-    // ================= WELCOME / GOODBYE HANDLER =================
+    // ================= WELCOME / GOODBYE HANDLER (robust) =================
+sock.ev.on("group-participants.update", async (update) => {
+	try {
+		// debug: always log raw update so we know what shape it has
+		console.log("GROUP-PARTICIPANTS.UPDATE:", JSON.stringify(update));
 
-    sock.ev.on("group-participants.update", async (update) => {
-	    try {
-		    const groupJid = update.id;
-		    const participants = update.participants; // array of JIDs
-		    const action = update.action; // "add", "remove", "promote", etc.
+		const groupJid = update.id;
+		const action = update.action; // e.g. "add", "remove", "promote", "invite", ...
+		let participants = update.participants || [];
 
-		    if (action !== "add") return; // only welcome on join
+		// Bail early if this isn't an addition / invite
+		if (!["add", "invite"].includes(action)) return;
 
-		    for (const user of participants) {
-			const userJid = user.includes("@") ? user : `${user}@s.whatsapp.net`;
+		// Participants sometimes come as strings ("1234@s.whatsapp.net")
+		// or as objects ({ id: '1234@s.whatsapp.net', ... }). Normalize:
+		participants = participants.map(p => {
+			if (!p) return null;
+			if (typeof p === "string") return p;
+			if (typeof p === "object" && p.id) return p.id;
+			// fallback: stringify
+			return String(p);
+		}).filter(Boolean);
+
+		// Slight delay to let WA settle group metadata (helps avoid race)
+		await new Promise(r => setTimeout(r, 700));
+
+		for (const userJidRaw of participants) {
+			// Ensure full @s.whatsapp.net form
+			const userJid = userJidRaw.includes("@") ? userJidRaw : `${userJidRaw}@s.whatsapp.net`;
 			const username = userJid.split("@")[0];
 
-			const welcomeText = 
-    `⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
+			// Compose a more thrilling, informal welcome
+			const welcomeText =
+`⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
 
-    Welcome @${username} 👑  
-    Another brave soul has joined the chaos! 🗿
+Welcome @${username} 👑  
+Another brave soul has joined the chaos! 🗿
 
-    Drop your favorite emoji to show your current mood 😈  
-    And don’t forget to introduce yourself:
+Drop your favorite emoji to show your current mood 😈  
+And don’t forget to introduce yourself:
 
-    📝 *Introduction Form:*
-    • Name:
-    • Age:
-    • Favorite anime:
-    • Favorite character:
+📝 *Intro for the battlefield:*
+• Name:
+• Age:
+• Favorite anime:
+• Favorite character:
 
-    💥 Prepare for memes, chaos, debates, and legendary moments.
-    ⚔️ *Welcome to the battlefield!*`;
+💥 Prepare for memes, chaos, debates, and legendary moments.
+⚔️ *Welcome to the battlefield!*`;
 
-			    await sock.sendMessage(groupJid, {
-				    text: welcomeText,
-				    mentions: [userJid]
-			    });
-		    }
+			// Send message and mention the new warrior so WA shows the name
+			await sock.sendMessage(groupJid, {
+				text: welcomeText,
+				mentions: [userJid]
+			});
+		}
+	} catch (err) {
+		console.error("WELCOME ERROR:", err);
+	}
+});
 
-	    } catch (err) {
-		    console.error("WELCOME ERROR:", err);
-	    }
-    });
 
 
     function normalizeJid(jid) {
