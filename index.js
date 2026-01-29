@@ -222,10 +222,7 @@ sock.ev.on("group-participants.update", async (update) => {
 			const welcomeText =
 `⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
 
-💥 *@${username} has entered the battlefield!* 💥
-
-⚔️ The gates have opened… chaos has increased… legends are watching… 😈🔥
-You have officially stepped into the arena. No turning back now.
+💥 *@${username} has entered the CHAOS!* 💥
 
 Before you vanish into the madness, present yourself, warrior:
 
