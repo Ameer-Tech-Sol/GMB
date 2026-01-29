@@ -225,7 +225,7 @@ sock.ev.on("group-participants.update", async (update) => {
 💥 @${mention} has entered the battlefield! 💥
 
 ⚔️ The gates have opened… chaos has increased… legends are watching… 😈🔥
-You’ve officially stepped into the arena. No turning back now.
+You have officially stepped into the arena. No turning back now.
 
 Before you vanish into the madness, present yourself, warrior:
 
