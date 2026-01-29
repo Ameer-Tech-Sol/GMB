@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>GMB - Register</title></head>
+<body>
+  <h1>GMB - Register</h1>
+  <form id="reg">
+    Phone (E.g. 923069220323): <input id="phone"><br>
+    Password: <input id="pwd" type="password"><br>
+    <button>Register</button>
+  </form>
+  <div id="out"></div>
+  <script>
+    document.getElementById('reg').addEventListener('submit', async(e)=>{
+      e.preventDefault();
+      const phone = document.getElementById('phone').value.trim();
+      const password = document.getElementById('pwd').value;
+      const body = JSON.stringify({ phone, password });
+      const r = await fetch('/api/register',{ method:'POST', headers: {'Content-Type':'application/json'}, body });
+      const j = await r.json();
+      document.getElementById('out').innerText = JSON.stringify(j, null, 2);
+      alert('Registered. Use the bot to verify the code shown on screen (for now).');
+    });
+  </script>
+</body>
+</html>
