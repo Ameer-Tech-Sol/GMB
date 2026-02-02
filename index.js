@@ -7,6 +7,8 @@ import makeWASocket, {
 import qrcode from "qrcode-terminal";
 import fs from "fs";
 import axios from "axios";
+import { addCoins, getBalance } from "./db.js";
+
 
 
 // ================= IMAGE SEARCH ENGINE =================
@@ -750,5 +752,26 @@ if (command === "inactive") {
 
     });
 }
+
+//=============== ECONOMY TESTING =================
+if (command === "give") {
+  try {
+    const amount = Number(args[0]) || 0;
+    if (amount <= 0) {
+      return sock.sendMessage(from, { text: "❌ Invalid amount" });
+    }
+
+    const newBalance = await addCoins(senderNumber, amount);
+
+    await sock.sendMessage(from, {
+      text: `💰 You received §${amount} Sigils\n🔥 New Balance: §${newBalance}`,
+    });
+  } catch (err) {
+    await sock.sendMessage(from, {
+      text: `❌ ${err.message}`,
+    });
+  }
+}
+
 
 startBot();
