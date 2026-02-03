@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import makeWASocket, {
     DisconnectReason,
     useMultiFileAuthState,
@@ -8,7 +9,7 @@ import qrcode from "qrcode-terminal";
 import fs from "fs";
 import axios from "axios";
 import { addCoins, getBalance } from "./db.js";
-import 'dotenv/config'
+
 
 
 
