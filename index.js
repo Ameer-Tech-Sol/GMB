@@ -751,12 +751,27 @@ if (command === "inactive") {
 
             //=============== ECONOMY TESTING =================
             if (command === "give") {
-                console.log("DEBUG: Attempting .give for number:", senderNumber); // ADD THIS LINE
+                //console.log("DEBUG: Attempting .give for number:", senderNumber); // ADD THIS LINE
                 try {
                     const amount = Number(args[0]) || 0;
                     if (amount <= 0) {
                         return sock.sendMessage(from, { text: "❌ Invalid amount" });
                     }
+
+                    // BETTER SENDER DETECTION
+                    let who = msg.key.participant || msg.key.remoteJid;
+                    let senderNum = who.split('@')[0].split(':')[0];
+
+                    // If it's a group, try to find the real phone number from participants
+                    if (isGroup) {
+                        const groupMetadata = await sock.groupMetadata(from);
+                        const participant = groupMetadata.participants.find(p => p.id === who);
+                        if (participant && participant.phoneNumber) {
+                            senderNum = participant.phoneNumber.split('@')[0].split(':')[0];
+                        }
+                    }
+
+                    console.log("DEBUG: Final senderNumber being sent to DB:", senderNum);
 
                     const newBalance = await addCoins(senderNumber, amount);
 
