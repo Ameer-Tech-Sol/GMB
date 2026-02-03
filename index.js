@@ -751,6 +751,7 @@ if (command === "inactive") {
 
             //=============== ECONOMY TESTING =================
             if (command === "give") {
+                console.log("DEBUG: Attempting .give for number:", senderNumber); // ADD THIS LINE
                 try {
                     const amount = Number(args[0]) || 0;
                     if (amount <= 0) {
