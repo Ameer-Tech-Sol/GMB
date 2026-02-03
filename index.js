@@ -773,7 +773,7 @@ if (command === "inactive") {
 
                     console.log("DEBUG: Final senderNumber being sent to DB:", senderNum);
 
-                    const newBalance = await addCoins(senderNumber, amount);
+                    const newBalance = await addCoins(senderNum, amount);
 
                     await sock.sendMessage(from, {
                         text: `💰 You received §${amount} Sigils\n🔥 New Balance: §${newBalance}`,
