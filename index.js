@@ -138,6 +138,64 @@ function saveActivity() {
     fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(activityDB, null, 2));
 }
 
+// ========== Spot-the-Difference (.std) helper state =============
+const activeStdGames = new Map();      // phone -> { correct, ts, timeoutId, fromJid }
+const lastStdCompleted = new Map();    // phone -> timestamp ms when user last finished a game (right/wrong)
+const STD_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes cooldown AFTER finishing a game
+const STD_TIMEOUT_MS = 2 * 60 * 1000;  // 2 minutes to answer before game expires
+
+// Emoji pool (extendable)
+const EMOJI_POOL = [
+  "🍥","🔥","🥊","⚡","🐉","💧","✨","🌙","🍀","💥",
+  "🌸","🌊","🪄","🔮","🍣","🍕","🍩","🍪","🌟","⚔️",
+  "🛡️","🐱","🐶","🐼","🐵","🐲","🌈","🌪️","☀️","🌙"
+];
+
+function shuffleArray(arr) {
+  return arr.slice().sort(() => 0.5 - Math.random());
+}
+
+function normalizePhoneRaw(raw) {
+  if (!raw) return null;
+  // handle forms like "919999888777:12345@s.whatsapp.net" or "919999888777@s.whatsapp.net"
+  const only = String(raw).split("@")[0].split(":")[0];
+  return only.replace(/\D/g, "");
+}
+
+// Start a new STD game for phone (throws if user already has an active game)
+function startStdGame(phone, destJid) {
+  if (activeStdGames.has(phone)) throw new Error("ALREADY_ACTIVE");
+  // build base of 5 unique emojis
+  const base = shuffleArray(EMOJI_POOL).slice(0, 5);
+  // pick index to change
+  const idx = Math.floor(Math.random() * base.length);
+  // pick a differing emoji not in base
+  const otherChoices = EMOJI_POOL.filter(e => !base.includes(e));
+  const diff = otherChoices[Math.floor(Math.random() * otherChoices.length)];
+  const alt = base.slice();
+  alt[idx] = diff;
+
+  const A = `A: ${base.join("")}`;
+  const B = `B: ${alt.join("")}`;
+
+  const ts = Date.now();
+  const timeoutId = setTimeout(async () => {
+    // expire the game if nobody answered in time
+    const g = activeStdGames.get(phone);
+    if (!g) return;
+    activeStdGames.delete(phone);
+    try {
+      await sock.sendMessage(destJid, {
+        text: `⏰ Time's up! You didn't answer in time. Start a new game with .std`
+      });
+    } catch (e) { /* ignore send errors */ }
+  }, STD_TIMEOUT_MS);
+
+  activeStdGames.set(phone, { correct: diff, ts, timeoutId, fromJid: destJid });
+  return { A, B };
+}
+
+
 function getToday() {
     return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
@@ -313,18 +371,62 @@ Before you vanish into the madness, present yourself, warrior:
         }
 
 
-        let sender = msg.key.participant || msg.key.remoteJid;
-        sender = sender.split(":")[0] + "@s.whatsapp.net";
-        const senderNumber = sender.split("@")[0];
+        // === parse sender & message text (unified) ===
+let whoRaw = msg.key.participant || msg.key.remoteJid;
+let senderJid = whoRaw.includes("@") ? whoRaw.split(":")[0] + "@s.whatsapp.net" : `${whoRaw.split(":")[0]}@s.whatsapp.net`;
+const senderNumber = senderJid.split("@")[0];
 
+const text =
+    msg.message.conversation ||
+    msg.message.extendedTextMessage?.text ||
+    "";
 
+// === If the user has an active STD game, treat any non-empty reply as the answer (no prefix required) ===
+if (activeStdGames.has(senderNumber)) {
+  const game = activeStdGames.get(senderNumber);
 
-        const text =
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            "";
+  // normalize reply
+  const reply = (text || "").trim();
+  if (!reply) {
+    // ignore empty messages
+    return;
+  }
 
-        if (!text.startsWith(PREFIX)) return;
+  // Accept the user replying with the emoji anywhere in their text.
+  const answeredCorrect = reply.includes(game.correct);
+
+  // clear timeout and remove game before responding (prevents races)
+  clearTimeout(game.timeoutId);
+  activeStdGames.delete(senderNumber);
+
+  if (answeredCorrect) {
+    const secondsTaken = Math.floor((Date.now() - game.ts) / 1000);
+    const coins = Math.max(1, 60 - secondsTaken); // at least 1
+    try {
+      const newBalance = await addCoins(senderNumber, coins); // writes to DB
+      lastStdCompleted.set(senderNumber, Date.now()); // start cooldown now
+      await sock.sendMessage(game.fromJid, {
+        text: `✅ Correct — you spotted it!\nYou answered in ${secondsTaken}s and earned §${coins} Sigils.\n🔥 New balance: §${newBalance}`
+      }, { quoted: msg });
+    } catch (err) {
+      // e.g. user not registered -> map to friendly message
+      const msgText = /not registered/i.test(String(err.message)) ? `❌ You are not registered. Register on the website and try again.` : `❌ ${err.message}`;
+      await sock.sendMessage(game.fromJid, { text: msgText }, { quoted: msg });
+    }
+  } else {
+    // wrong answer: reveal correct emoji and start cooldown
+    lastStdCompleted.set(senderNumber, Date.now());
+    await sock.sendMessage(game.fromJid, {
+      text: `❌ Wrong. The correct emoji was: ${game.correct}\nTry again in 2 minutes with .std`
+    }, { quoted: msg });
+  }
+
+  return; // done handling this message
+}
+
+// If not an STD-answer, and message doesn't start with prefix, ignore (normal behavior)
+if (!text.startsWith(PREFIX)) return;
+
 
         const args = text.slice(1).trim().split(/\s+/);
         const command = args.shift().toLowerCase();
@@ -748,6 +850,62 @@ if (command === "inactive") {
 				// send with the single, correctly filled mentions array
 				return sock.sendMessage(from, { text, mentions });
 			}
+
+
+            // ================= .std - Spot The Difference =================
+if (command === "std") {
+  try {
+    // DETERMINE phone number of the user (same logic as .give)
+    let who = msg.key.participant || msg.key.remoteJid;
+    let senderNum = who.split('@')[0].split(':')[0];
+
+    if (isGroup) {
+      const groupMetadata = await sock.groupMetadata(from);
+      const participant = groupMetadata.participants.find(p => p.id === who);
+      if (participant && participant.phoneNumber) {
+        senderNum = participant.phoneNumber.split('@')[0].split(':')[0];
+      }
+    }
+
+    // registration check: try a light call to getBalance to ensure user exists
+    try {
+      await getBalance(senderNum); // will throw if not registered (your db.js likely does)
+    } catch (err) {
+      await sock.sendMessage(from, { text: "❌ You must register first on the website to play .std." }, { quoted: msg });
+      return;
+    }
+
+    // cooldown check
+    const last = lastStdCompleted.get(senderNum) || 0;
+    const since = Date.now() - last;
+    if (since < STD_COOLDOWN_MS) {
+      const remainingMs = STD_COOLDOWN_MS - since;
+      const remainSec = Math.ceil(remainingMs / 1000);
+      await sock.sendMessage(from, { text: `⏳ Cooldown active. Try again in ${remainSec}s.` }, { quoted: msg });
+      return;
+    }
+
+    // check if they already have an active game
+    if (activeStdGames.has(senderNum)) {
+      await sock.sendMessage(from, { text: "⚠️ You already have an active .std game — reply with the odd emoji to answer." }, { quoted: msg });
+      return;
+    }
+
+    // start the game
+    const { A, B } = startStdGame(senderNum, from);
+    const instruction = `🔎 *Spot the Difference*\nReply with the *odd* emoji (just paste the emoji) as fast as you can!\nReward: 60 - seconds_taken (minimum §1)\nCooldown after answering: 2 minutes\n\n${A}\n${B}`;
+
+    await sock.sendMessage(from, { text: instruction }, { quoted: msg });
+  } catch (err) {
+    if (err.message === "ALREADY_ACTIVE") {
+      await sock.sendMessage(from, { text: "⚠️ You already have an active game — reply with the odd emoji." }, { quoted: msg });
+    } else {
+      console.error(".std ERROR:", err);
+      await sock.sendMessage(from, { text: `❌ Error starting .std: ${err.message}` }, { quoted: msg });
+    }
+  }
+}
+
             
 
             //=============== ECONOMY TESTING =================
