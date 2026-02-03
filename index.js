@@ -104,7 +104,6 @@ function shuffleArray(arr) {
   return arr.slice().sort(() => 0.5 - Math.random());
 }
 
-// Logic to start the game and set the timer
 function startStdGame(phone, destJid, sockInstance) {
   if (activeStdGames.has(phone)) throw new Error("ALREADY_ACTIVE");
   const base = shuffleArray(EMOJI_POOL).slice(0, 5);
@@ -167,7 +166,6 @@ async function startBot() {
         }
     });
 
-    // ================= WELCOME HANDLER =================
     sock.ev.on("group-participants.update", async (update) => {
         try {
             const groupJid = update.id;
@@ -199,13 +197,12 @@ async function startBot() {
         const from = msg.key.remoteJid;
         const isGroup = from.endsWith("@g.us");
 
-        // --- 🛡️ 1. GLOBAL IDENTITY SCANNER (LID to Phone Conversion) ---
+        // --- 🛡️ GLOBAL IDENTITY SCANNER ---
         let whoRaw = msg.key.participant || msg.key.remoteJid;
-        let senderNum = whoRaw.split('@')[0].split(':')[0]; // Default ID
+        let senderNum = whoRaw.split('@')[0].split(':')[0];
 
         if (isGroup) {
             try {
-                // Fetch group info once per message flow to ensure we have the real phone number
                 const groupMetadata = await sock.groupMetadata(from);
                 const participant = groupMetadata.participants.find(p => p.id === whoRaw);
                 if (participant && participant.phoneNumber) {
@@ -214,22 +211,19 @@ async function startBot() {
             } catch (e) {}
         }
 
-        // --- 📊 2. ACTIVITY TRACKING (Using the converted Phone Number) ---
+        // --- 📊 ACTIVITY TRACKING ---
         if (isGroup) {
             const today = getToday();
             if (!activityDB[from]) activityDB[from] = {};
             if (!activityDB[from][today]) activityDB[from][today] = {};
-
-            if (!activityDB[from][today][senderNum]) {
-                activityDB[from][today][senderNum] = 0;
-            }
+            if (!activityDB[from][today][senderNum]) activityDB[from][today][senderNum] = 0;
             activityDB[from][today][senderNum] += 1;
             saveActivity();
         }
 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
-        // --- 🔎 3. STD GAME REPLY CHECK ---
+        // --- 🔎 STD GAME REPLY CHECK ---
         if (activeStdGames.has(senderNum)) {
             const game = activeStdGames.get(senderNum);
             const reply = text.trim();
@@ -237,7 +231,6 @@ async function startBot() {
                 const answeredCorrect = reply.includes(game.correct);
                 clearTimeout(game.timeoutId);
                 activeStdGames.delete(senderNum);
-
                 if (answeredCorrect) {
                     const secondsTaken = Math.floor((Date.now() - game.ts) / 1000);
                     const coins = Math.max(1, 60 - secondsTaken);
@@ -245,56 +238,53 @@ async function startBot() {
                         const newBalance = await addCoins(senderNum, coins);
                         lastStdCompleted.set(senderNum, Date.now());
                         await sock.sendMessage(from, {
-                            text: `✅ *Correct!* You spotted it!\n⏱️ Time: ${secondsTaken}s\n💰 Reward: §${coins} Sigils\n🔥 New balance: §${newBalance}`
+                            text: `✅ *Correct!* You found: ${game.correct}\n⏱️ Time: ${secondsTaken}s\n💰 Reward: §${coins} Sigils\n🔥 New balance: §${newBalance}`
                         }, { quoted: msg });
-                    } catch (err) {
-                        const errMsg = /not registered/i.test(err.message) ? "❌ You are not registered. Visit the website first." : `❌ ${err.message}`;
-                        await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
-                    }
+                    } catch (err) { await sock.sendMessage(from, { text: `❌ ${err.message}` }, { quoted: msg }); }
                 } else {
                     lastStdCompleted.set(senderNum, Date.now());
-                    await sock.sendMessage(from, { text: `❌ *Wrong!* The correct emoji was: ${game.correct}\nTry again in 2 minutes.` }, { quoted: msg });
+                    await sock.sendMessage(from, { text: `❌ *Wrong!* The correct emoji was: ${game.correct}` }, { quoted: msg });
                 }
-                return; // Stop here, don't process as command
+                return;
             }
         }
 
         if (!text.startsWith(PREFIX)) return;
-
         const args = text.slice(1).trim().split(/\s+/);
         const command = args.shift().toLowerCase();
 
         // ================= COMMANDS =================
-        if (command === "ping") {
-            return sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg });
-        }
+        if (command === "ping") return sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg });
 
         if (isGroup) {
             const groupMetadata = await sock.groupMetadata(from);
             const participants = groupMetadata.participants;
 
-            // Admin detection logic
-            const senderParticipant = participants.find(p => jidToId(p.id) === jidToId(whoRaw) || jidToId(p.phoneNumber) === jidToId(whoRaw));
+            // --- ADMIN DETECTION ---
+            const senderParticipant = participants.find(p => jidToId(p.id) === jidToId(whoRaw) || (p.phoneNumber && jidToId(p.phoneNumber) === jidToId(whoRaw)));
             const isSenderAdmin = senderParticipant?.admin === "admin" || senderParticipant?.admin === "superadmin";
+            const botId = jidToId(sock.user.id);
+            const botParticipant = participants.find(p => jidToId(p.id) === botId || (p.phoneNumber && jidToId(p.phoneNumber) === botId));
+            const isBotAdmin = botParticipant?.admin === "admin" || botParticipant?.admin === "superadmin";
 
-            // .active / .activity / .inactive commands
+            // 1. .active
             if (command === "active") {
-                const threshold = 5;
+                const threshold = 1; // Lowered to 1 so you see results immediately
                 const days = getLastNDays(7);
                 const groupData = activityDB[from] || {};
                 let perUser = {};
-                for (let d of days) {
-                    if (!groupData[d]) continue;
-                    for (let uid in groupData[d]) {
-                        if (!perUser[uid]) perUser[uid] = 0;
-                        perUser[uid] += groupData[d][uid];
+                days.forEach(d => {
+                    if (groupData[d]) {
+                        Object.entries(groupData[d]).forEach(([uid, count]) => {
+                            perUser[uid] = (perUser[uid] || 0) + count;
+                        });
                     }
-                }
+                });
 
-                const activeList = Object.entries(perUser).filter(([uid, count]) => count >= threshold).sort((a, b) => b[1] - a[1]).slice(0, 10);
-                let outText = `✅ *Active members (>= ${threshold} msgs)*\n\n`;
+                const sorted = Object.entries(perUser).filter(([uid, count]) => count >= threshold).sort((a, b) => b[1] - a[1]).slice(0, 15);
+                let outText = `✅ *Active Members (Last 7 Days)*\n\n`;
                 let mentions = [];
-                activeList.forEach(([uid, count], i) => {
+                sorted.forEach(([uid, count], i) => {
                     const p = participants.find(p => jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid));
                     const mentionJid = p ? (p.phoneNumber ? p.phoneNumber.split(":")[0] + "@s.whatsapp.net" : p.id) : `${uid}@s.whatsapp.net`;
                     mentions.push(mentionJid);
@@ -303,6 +293,7 @@ async function startBot() {
                 return sock.sendMessage(from, { text: outText, mentions }, { quoted: msg });
             }
 
+            // 2. .activity
             if (command === "activity") {
                 const days = getLastNDays(7);
                 const groupData = activityDB[from] || {};
@@ -316,7 +307,7 @@ async function startBot() {
                     }
                 });
                 const sorted = Object.entries(perUser).sort((a, b) => b[1] - a[1]).slice(0, 5);
-                let outText = `📊 *Group Activity Report*\n💬 Total: ${total}\n\n🔥 *Top Members:*\n`;
+                let outText = `📊 *Group Activity*\n💬 Total Messages: ${total}\n\n🔥 *Top Contributors:*\n`;
                 let mentions = [];
                 sorted.forEach(([uid, count]) => {
                     const p = participants.find(p => jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid));
@@ -327,33 +318,89 @@ async function startBot() {
                 return sock.sendMessage(from, { text: outText, mentions });
             }
 
-            // --- 🔎 STD COMMAND (.std) ---
+            // 3. .inactive
+            if (command === "inactive") {
+                const days = getLastNDays(7);
+                const groupData = activityDB[from] || {};
+                let activeUids = new Set();
+                days.forEach(d => { if (groupData[d]) Object.keys(groupData[d]).forEach(u => activeUids.add(u)); });
+                
+                const inactive = participants.filter(p => !activeUids.has(jidToId(p.id)) && (!p.phoneNumber || !activeUids.has(jidToId(p.phoneNumber))));
+                let outText = `💤 *Inactive Members (0 msgs in 7 days)*\n\n`;
+                let mentions = [];
+                inactive.slice(0, 20).forEach(p => {
+                    const mJid = p.phoneNumber ? p.phoneNumber.split(":")[0] + "@s.whatsapp.net" : p.id;
+                    mentions.push(mJid);
+                    outText += `• @${mJid.split("@")[0]}\n`;
+                });
+                return sock.sendMessage(from, { text: outText, mentions });
+            }
+
+            // --- ADMIN COMMANDS ---
+            if (["kick", "del", "promote", "demote", "tagall", "hidetag"].includes(command) && !isSenderAdmin) {
+                return sock.sendMessage(from, { text: "❌ *Admin only!*" }, { quoted: msg });
+            }
+
+            if (command === "kick") {
+                if (!isBotAdmin) return sock.sendMessage(from, { text: "❌ Make the bot Admin first." });
+                const target = msg.message.extendedTextMessage?.contextInfo?.participant || (args[0] ? args[0].replace("@", "") + "@s.whatsapp.net" : null);
+                if (!target) return sock.sendMessage(from, { text: "❌ Tag someone to kick." });
+                await sock.groupParticipantsUpdate(from, [target], "remove");
+                return sock.sendMessage(from, { text: "👢 Removed user." });
+            }
+
+            if (command === "del") {
+                const key = {
+                    remoteJid: from,
+                    fromMe: false,
+                    id: msg.message.extendedTextMessage?.contextInfo?.stanzaId,
+                    participant: msg.message.extendedTextMessage?.contextInfo?.participant
+                };
+                if (!key.id) return sock.sendMessage(from, { text: "❌ Reply to a message to delete it." });
+                await sock.sendMessage(from, { delete: key });
+            }
+
+            if (command === "promote" || command === "demote") {
+                const target = msg.message.extendedTextMessage?.contextInfo?.participant || (args[0] ? args[0].replace("@", "") + "@s.whatsapp.net" : null);
+                if (!target) return sock.sendMessage(from, { text: `❌ Tag someone to ${command}.` });
+                await sock.groupParticipantsUpdate(from, [target], command);
+                return sock.sendMessage(from, { text: `✅ User ${command}d.` });
+            }
+
+            if (command === "tagall" || command === "hidetag") {
+                const message = args.join(" ") || "Attention!";
+                const mentions = participants.map(p => p.id);
+                if (command === "tagall") {
+                    let out = `📢 *Tag All*\n\n${message}\n\n`;
+                    mentions.forEach(m => out += `@${m.split("@")[0]} `);
+                    await sock.sendMessage(from, { text: out, mentions });
+                } else {
+                    await sock.sendMessage(from, { text: message, mentions });
+                }
+            }
+
+            // --- ECONOMY & GAMES ---
             if (command === "std") {
                 try {
                     await getBalance(senderNum); 
                     const last = lastStdCompleted.get(senderNum) || 0;
                     if (Date.now() - last < STD_COOLDOWN_MS) {
-                        return sock.sendMessage(from, { text: `⏳ Cooldown active. Try again in ${Math.ceil((STD_COOLDOWN_MS - (Date.now() - last)) / 1000)}s.` }, { quoted: msg });
+                        return sock.sendMessage(from, { text: `⏳ Cooldown: ${Math.ceil((STD_COOLDOWN_MS - (Date.now() - last)) / 1000)}s.` }, { quoted: msg });
                     }
                     const { A, B } = startStdGame(senderNum, from, sock);
-                    await sock.sendMessage(from, { text: `🔎 *Spot the Difference*\nReply with the *odd* emoji!\n\n${A}\n${B}` }, { quoted: msg });
-                } catch (err) {
-                    const msgText = /not registered/i.test(err.message) ? "❌ Register first to play." : `❌ ${err.message}`;
-                    await sock.sendMessage(from, { text: msgText }, { quoted: msg });
-                }
+                    await sock.sendMessage(from, { text: `🔎 *Spot the Difference*\n\n${A}\n${B}` }, { quoted: msg });
+                } catch (err) { await sock.sendMessage(from, { text: "❌ Register first to play." }, { quoted: msg }); }
             }
 
-            // --- 💰 GIVE COMMAND (.give) ---
             if (command === "give") {
                 try {
                     const amount = Number(args[0]) || 0;
                     if (amount <= 0) return sock.sendMessage(from, { text: "❌ Invalid amount" });
-                    const newBalance = await addCoins(senderNum, amount);
-                    await sock.sendMessage(from, { text: `💰 Success!\n🔥 New Balance: §${newBalance}` });
+                    const newBal = await addCoins(senderNum, amount);
+                    await sock.sendMessage(from, { text: `💰 Success!\n🔥 Balance: §${newBal}` });
                 } catch (err) { await sock.sendMessage(from, { text: `❌ ${err.message}` }); }
             }
 
-            // .img search
             if (command === "img") {
                 if (!args.length) return sock.sendMessage(from, { text: "❌ Usage: .img <query>" });
                 const query = args.join(" ");
