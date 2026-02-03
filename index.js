@@ -10,141 +10,90 @@ import fs from "fs";
 import axios from "axios";
 import { addCoins, getBalance } from "./db.js";
 
-
-
-
 // ================= IMAGE SEARCH ENGINE =================
-
 const IMG_CACHE = new Map();
 
 function sleep(ms) {
-	return new Promise(res => setTimeout(res, ms));
+    return new Promise(res => setTimeout(res, ms));
 }
 
 function pickRandom(arr, n = 5) {
-	return arr.sort(() => 0.5 - Math.random()).slice(0, n);
+    return arr.sort(() => 0.5 - Math.random()).slice(0, n);
 }
 
-// ---------- Pinterest JSON search ----------
 async function searchPinterest(query) {
-	const url = `https://www.pinterest.com/resource/BaseSearchResource/get/?source_url=/search/pins/?q=${encodeURIComponent(query)}&data=${encodeURIComponent(JSON.stringify({
-		options: {
-			query: query,
-			scope: "pins",
-			no_fetch_context_on_resource: false
-		},
-		context: {}
-	}))}`;
+    const url = `https://www.pinterest.com/resource/BaseSearchResource/get/?source_url=/search/pins/?q=${encodeURIComponent(query)}&data=${encodeURIComponent(JSON.stringify({
+        options: {
+            query: query,
+            scope: "pins",
+            no_fetch_context_on_resource: false
+        },
+        context: {}
+    }))}`;
 
-	const res = await fetch(url, {
-		headers: {
-			"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-			"accept": "application/json"
-		}
-	});
+    const res = await fetch(url, {
+        headers: {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "accept": "application/json"
+        }
+    });
 
-	if (!res.ok) throw new Error("Pinterest blocked");
-
-	const json = await res.json();
-
-	const results = json?.resource_response?.data?.results || [];
-
-	const images = results
-		.map(p => p?.images?.orig?.url)
-		.filter(Boolean);
-
-	return images;
+    if (!res.ok) throw new Error("Pinterest blocked");
+    const json = await res.json();
+    const results = json?.resource_response?.data?.results || [];
+    const images = results.map(p => p?.images?.orig?.url).filter(Boolean);
+    return images;
 }
 
-// ---------- DuckDuckGo JSON fallback ----------
 async function searchDuckDuckGo(query) {
-	const vqdRes = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`);
-	const vqdText = await vqdRes.text();
-
-	const vqdMatch = vqdText.match(/vqd='(.*?)'/);
-	if (!vqdMatch) throw new Error("DDG vqd fail");
-
-	const vqd = vqdMatch[1];
-
-	const api = `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}&f=,,,&p=1`;
-
-	const res = await fetch(api, {
-		headers: {
-			"user-agent": "Mozilla/5.0"
-		}
-	});
-
-	if (!res.ok) throw new Error("DDG blocked");
-
-	const json = await res.json();
-
-	return json.results.map(r => r.image).filter(Boolean);
+    const vqdRes = await fetch(`https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`);
+    const vqdText = await vqdRes.text();
+    const vqdMatch = vqdText.match(/vqd='(.*?)'/);
+    if (!vqdMatch) throw new Error("DDG vqd fail");
+    const vqd = vqdMatch[1];
+    const api = `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}&f=,,,&p=1`;
+    const res = await fetch(api, { headers: { "user-agent": "Mozilla/5.0" } });
+    if (!res.ok) throw new Error("DDG blocked");
+    const json = await res.json();
+    return json.results.map(r => r.image).filter(Boolean);
 }
 
-// ---------- Main search ----------
 async function imageSearch(query, limit = 5) {
-	const key = query.toLowerCase();
-
-	// Cache
-	if (IMG_CACHE.has(key)) {
-		return pickRandom(IMG_CACHE.get(key), limit);
-	}
-
-	let images = [];
-
-	try {
-		console.log("Trying Pinterest...");
-		images = await searchPinterest(query);
-	} catch (e) {
-		console.log("Pinterest failed, trying DDG...");
-	}
-
-	if (images.length < 3) {
-		try {
-			const ddg = await searchDuckDuckGo(query);
-			images = images.concat(ddg);
-		} catch (e) {
-			console.log("DDG also failed");
-		}
-	}
-
-	images = [...new Set(images)];
-
-	if (images.length === 0) throw new Error("No images found");
-
-	IMG_CACHE.set(key, images);
-
-	return pickRandom(images, limit);
+    const key = query.toLowerCase();
+    if (IMG_CACHE.has(key)) return pickRandom(IMG_CACHE.get(key), limit);
+    let images = [];
+    try {
+        images = await searchPinterest(query);
+    } catch (e) { console.log("Pinterest failed, trying DDG..."); }
+    if (images.length < 3) {
+        try {
+            const ddg = await searchDuckDuckGo(query);
+            images = images.concat(ddg);
+        } catch (e) { console.log("DDG also failed"); }
+    }
+    images = [...new Set(images)];
+    if (images.length === 0) throw new Error("No images found");
+    IMG_CACHE.set(key, images);
+    return pickRandom(images, limit);
 }
 
-
-
-
-
+// ================= ACTIVITY SYSTEM =================
 const ACTIVITY_FILE = "./data/activity.json";
-
-// ensure data folder exists
-if (!fs.existsSync("./data")) {
-    fs.mkdirSync("./data");
-}
-
-// load or init db
+if (!fs.existsSync("./data")) fs.mkdirSync("./data");
 let activityDB = {};
 if (fs.existsSync(ACTIVITY_FILE)) {
     activityDB = JSON.parse(fs.readFileSync(ACTIVITY_FILE));
 }
-
 function saveActivity() {
     fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(activityDB, null, 2));
 }
 
-// ========== Spot-the-Difference (.std) helper state =============
-const activeStdGames = new Map();      // phone -> { correct, ts, timeoutId, fromJid }
-const lastStdCompleted = new Map();    // phone -> timestamp ms when user last finished a game (right/wrong)
-const STD_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes cooldown AFTER finishing a game
-const STD_TIMEOUT_MS = 2 * 60 * 1000;  // 2 minutes to answer before game expires
+// ================= STD GAME HELPERS =================
+const activeStdGames = new Map();      
+const lastStdCompleted = new Map();    
+const STD_COOLDOWN_MS = 2 * 60 * 1000; 
+const STD_TIMEOUT_MS = 2 * 60 * 1000;  
 
-// Emoji pool (extendable)
 const EMOJI_POOL = [
   "🍥","🔥","🥊","⚡","🐉","💧","✨","🌙","🍀","💥",
   "🌸","🌊","🪄","🔮","🍣","🍕","🍩","🍪","🌟","⚔️",
@@ -155,21 +104,11 @@ function shuffleArray(arr) {
   return arr.slice().sort(() => 0.5 - Math.random());
 }
 
-function normalizePhoneRaw(raw) {
-  if (!raw) return null;
-  // handle forms like "919999888777:12345@s.whatsapp.net" or "919999888777@s.whatsapp.net"
-  const only = String(raw).split("@")[0].split(":")[0];
-  return only.replace(/\D/g, "");
-}
-
-// Start a new STD game for phone (throws if user already has an active game)
-function startStdGame(phone, destJid) {
+// Logic to start the game and set the timer
+function startStdGame(phone, destJid, sockInstance) {
   if (activeStdGames.has(phone)) throw new Error("ALREADY_ACTIVE");
-  // build base of 5 unique emojis
   const base = shuffleArray(EMOJI_POOL).slice(0, 5);
-  // pick index to change
   const idx = Math.floor(Math.random() * base.length);
-  // pick a differing emoji not in base
   const otherChoices = EMOJI_POOL.filter(e => !base.includes(e));
   const diff = otherChoices[Math.floor(Math.random() * otherChoices.length)];
   const alt = base.slice();
@@ -180,26 +119,18 @@ function startStdGame(phone, destJid) {
 
   const ts = Date.now();
   const timeoutId = setTimeout(async () => {
-    // expire the game if nobody answered in time
-    const g = activeStdGames.get(phone);
-    if (!g) return;
+    if (!activeStdGames.has(phone)) return;
     activeStdGames.delete(phone);
     try {
-      await sock.sendMessage(destJid, {
-        text: `⏰ Time's up! You didn't answer in time. Start a new game with .std`
-      });
-    } catch (e) { /* ignore send errors */ }
+      await sockInstance.sendMessage(destJid, { text: `⏰ Time's up! You didn't answer in time. Start a new game with .std` });
+    } catch (e) {}
   }, STD_TIMEOUT_MS);
 
   activeStdGames.set(phone, { correct: diff, ts, timeoutId, fromJid: destJid });
   return { A, B };
 }
 
-
-function getToday() {
-    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-}
-
+function getToday() { return new Date().toISOString().slice(0, 10); }
 function getLastNDays(n) {
     const days = [];
     for (let i = 0; i < n; i++) {
@@ -209,9 +140,6 @@ function getLastNDays(n) {
     }
     return days;
 }
-
-
-
 
 const PREFIX = ".";
 
@@ -231,728 +159,215 @@ async function startBot() {
 
     sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            console.log("📸 Scan this QR with WhatsApp:");
-            qrcode.generate(qr, { small: true });
-        }
-
-        if (connection === "open") {
-            console.log("✅ Bot connected successfully!");
-        }
-
+        if (qr) qrcode.generate(qr, { small: true });
+        if (connection === "open") console.log("✅ Bot connected successfully!");
         if (connection === "close") {
-            const shouldReconnect =
-                lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log("❌ Connection closed. Reconnect:", shouldReconnect);
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         }
     });
 
-    // ================= WELCOME / GOODBYE HANDLER (robust) =================
-sock.ev.on("group-participants.update", async (update) => {
-	try {
-		// debug: always log raw update so we know what shape it has
-		console.log("GROUP-PARTICIPANTS.UPDATE:", JSON.stringify(update));
+    // ================= WELCOME HANDLER =================
+    sock.ev.on("group-participants.update", async (update) => {
+        try {
+            const groupJid = update.id;
+            const action = update.action;
+            if (!["add", "invite"].includes(action)) return;
 
-		const groupJid = update.id;
-		const action = update.action; // e.g. "add", "remove", "promote", "invite", ...
-		let participants = update.participants || [];
+            let participants = (update.participants || []).map(p => typeof p === "string" ? p : p.id).filter(Boolean);
+            await new Promise(r => setTimeout(r, 700));
 
-		// Bail early if this isn't an addition / invite
-		if (!["add", "invite"].includes(action)) return;
-
-		// Participants sometimes come as strings ("1234@s.whatsapp.net")
-		// or as objects ({ id: '1234@s.whatsapp.net', ... }). Normalize:
-		participants = participants.map(p => {
-			if (!p) return null;
-			if (typeof p === "string") return p;
-			if (typeof p === "object" && p.id) return p.id;
-			// fallback: stringify
-			return String(p);
-		}).filter(Boolean);
-
-		// Slight delay to let WA settle group metadata (helps avoid race)
-		await new Promise(r => setTimeout(r, 700));
-
-		for (const userJidRaw of participants) {
-			// Ensure full @s.whatsapp.net form
-			const userJid = userJidRaw.includes("@") ? userJidRaw : `${userJidRaw}@s.whatsapp.net`;
-			const username = userJid.split("@")[0];
-
-			// Compose a more thrilling, informal welcome
-			const welcomeText =
-`⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️
-
-💥 *@${username} has entered the CHAOS!* 💥
-
-Before you vanish into the madness, present yourself, warrior:
-
-📝 *Name:*
-🎂 *Age:*
-🍥 *Favorite Anime:*
-👑 *Favorite Character:*
-
-😎 *Drop your favorite emoji to show your current power level!*
-
-⚔️ _Choose your side wisely… waifu wars are not for the weak._ 😏🔥`;
-
-			// Send message and mention the new warrior so WA shows the name
-			await sock.sendMessage(groupJid, {
-				text: welcomeText,
-				mentions: [userJid]
-			});
-		}
-	} catch (err) {
-		console.error("WELCOME ERROR:", err);
-	}
-});
-
-
-
-    function normalizeJid(jid) {
-    if (!jid) return jid;
-    return jid.split(":")[0].replace(/@.+/, "") + "@s.whatsapp.net";
-    }   
+            for (const userJidRaw of participants) {
+                const userJid = userJidRaw.includes("@") ? userJidRaw : `${userJidRaw}@s.whatsapp.net`;
+                const username = userJid.split("@")[0];
+                const welcomeText = `⚔️🔥 *A NEW WARRIOR HAS ENTERED THE REALM* 🔥⚔️\n\n💥 *@${username} has entered the CHAOS!* 💥\n\n📝 Name:\n🎂 Age:\n🍥 Anime:\n👑 Character:\n\n⚔️ _Choose your side wisely..._ 😏🔥`;
+                await sock.sendMessage(groupJid, { text: welcomeText, mentions: [userJid] });
+            }
+        } catch (err) { console.error("WELCOME ERROR:", err); }
+    });
 
     function jidToId(jid) {
-    if (!jid) return null;
-    return jid.split("@")[0].split(":")[0];
+        if (!jid) return null;
+        return jid.split("@")[0].split(":")[0];
     }
 
-
-    function getDisplayName(uid, participants) {
-        // try to find participant by matching id or phoneNumber
-        const p = participants.find(p =>
-            jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid)
-        );
-
-        if (!p) {
-            return uid; // fallback
-        }
-
-        // priority: contact name / notify / phone number
-        if (p.name) return p.name;
-        if (p.notify) return p.notify;
-        if (p.phoneNumber) return p.phoneNumber.split("@")[0];
-
-        return p.id;
-    }
-
-
-
-
-    // 🧠 MESSAGE HANDLER
+    // ================= MESSAGE HANDLER =================
     sock.ev.on("messages.upsert", async (m) => {
         const msg = m.messages[0];
-        if (!msg.message) return;
-        if (msg.key.fromMe) return;
+        if (!msg.message || msg.key.fromMe) return;
 
         const from = msg.key.remoteJid;
         const isGroup = from.endsWith("@g.us");
 
-        // ================= ACTIVITY TRACKING =================
+        // --- 🛡️ 1. GLOBAL IDENTITY SCANNER (LID to Phone Conversion) ---
+        let whoRaw = msg.key.participant || msg.key.remoteJid;
+        let senderNum = whoRaw.split('@')[0].split(':')[0]; // Default ID
+
+        if (isGroup) {
+            try {
+                // Fetch group info once per message flow to ensure we have the real phone number
+                const groupMetadata = await sock.groupMetadata(from);
+                const participant = groupMetadata.participants.find(p => p.id === whoRaw);
+                if (participant && participant.phoneNumber) {
+                    senderNum = participant.phoneNumber.split('@')[0].split(':')[0];
+                }
+            } catch (e) {}
+        }
+
+        // --- 📊 2. ACTIVITY TRACKING (Using the converted Phone Number) ---
         if (isGroup) {
             const today = getToday();
-
             if (!activityDB[from]) activityDB[from] = {};
             if (!activityDB[from][today]) activityDB[from][today] = {};
 
-            const senderRaw = msg.key.participant || msg.key.remoteJid;
-            const senderId = jidToId(senderRaw);
-
-            if (!activityDB[from][today][senderId]) {
-                activityDB[from][today][senderId] = 0;
+            if (!activityDB[from][today][senderNum]) {
+                activityDB[from][today][senderNum] = 0;
             }
-
-            activityDB[from][today][senderId] += 1;
-
+            activityDB[from][today][senderNum] += 1;
             saveActivity();
         }
 
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
-        // === parse sender & message text (unified) ===
-let whoRaw = msg.key.participant || msg.key.remoteJid;
-let senderJid = whoRaw.includes("@") ? whoRaw.split(":")[0] + "@s.whatsapp.net" : `${whoRaw.split(":")[0]}@s.whatsapp.net`;
-const senderNumber = senderJid.split("@")[0];
+        // --- 🔎 3. STD GAME REPLY CHECK ---
+        if (activeStdGames.has(senderNum)) {
+            const game = activeStdGames.get(senderNum);
+            const reply = text.trim();
+            if (reply) {
+                const answeredCorrect = reply.includes(game.correct);
+                clearTimeout(game.timeoutId);
+                activeStdGames.delete(senderNum);
 
-const text =
-    msg.message.conversation ||
-    msg.message.extendedTextMessage?.text ||
-    "";
+                if (answeredCorrect) {
+                    const secondsTaken = Math.floor((Date.now() - game.ts) / 1000);
+                    const coins = Math.max(1, 60 - secondsTaken);
+                    try {
+                        const newBalance = await addCoins(senderNum, coins);
+                        lastStdCompleted.set(senderNum, Date.now());
+                        await sock.sendMessage(from, {
+                            text: `✅ *Correct!* You spotted it!\n⏱️ Time: ${secondsTaken}s\n💰 Reward: §${coins} Sigils\n🔥 New balance: §${newBalance}`
+                        }, { quoted: msg });
+                    } catch (err) {
+                        const errMsg = /not registered/i.test(err.message) ? "❌ You are not registered. Visit the website first." : `❌ ${err.message}`;
+                        await sock.sendMessage(from, { text: errMsg }, { quoted: msg });
+                    }
+                } else {
+                    lastStdCompleted.set(senderNum, Date.now());
+                    await sock.sendMessage(from, { text: `❌ *Wrong!* The correct emoji was: ${game.correct}\nTry again in 2 minutes.` }, { quoted: msg });
+                }
+                return; // Stop here, don't process as command
+            }
+        }
 
-// === If the user has an active STD game, treat any non-empty reply as the answer (no prefix required) ===
-if (activeStdGames.has(senderNumber)) {
-  const game = activeStdGames.get(senderNumber);
-
-  // normalize reply
-  const reply = (text || "").trim();
-  if (!reply) {
-    // ignore empty messages
-    return;
-  }
-
-  // Accept the user replying with the emoji anywhere in their text.
-  const answeredCorrect = reply.includes(game.correct);
-
-  // clear timeout and remove game before responding (prevents races)
-  clearTimeout(game.timeoutId);
-  activeStdGames.delete(senderNumber);
-
-  if (answeredCorrect) {
-    const secondsTaken = Math.floor((Date.now() - game.ts) / 1000);
-    const coins = Math.max(1, 60 - secondsTaken); // at least 1
-    try {
-      const newBalance = await addCoins(senderNumber, coins); // writes to DB
-      lastStdCompleted.set(senderNumber, Date.now()); // start cooldown now
-      await sock.sendMessage(game.fromJid, {
-        text: `✅ Correct — you spotted it!\nYou answered in ${secondsTaken}s and earned §${coins} Sigils.\n🔥 New balance: §${newBalance}`
-      }, { quoted: msg });
-    } catch (err) {
-      // e.g. user not registered -> map to friendly message
-      const msgText = /not registered/i.test(String(err.message)) ? `❌ You are not registered. Register on the website and try again.` : `❌ ${err.message}`;
-      await sock.sendMessage(game.fromJid, { text: msgText }, { quoted: msg });
-    }
-  } else {
-    // wrong answer: reveal correct emoji and start cooldown
-    lastStdCompleted.set(senderNumber, Date.now());
-    await sock.sendMessage(game.fromJid, {
-      text: `❌ Wrong. The correct emoji was: ${game.correct}\nTry again in 2 minutes with .std`
-    }, { quoted: msg });
-  }
-
-  return; // done handling this message
-}
-
-// If not an STD-answer, and message doesn't start with prefix, ignore (normal behavior)
-if (!text.startsWith(PREFIX)) return;
-
+        if (!text.startsWith(PREFIX)) return;
 
         const args = text.slice(1).trim().split(/\s+/);
         const command = args.shift().toLowerCase();
 
-        console.log("⚡ Command:", command, "Args:", args);
-
-        // ================= BASIC =================
-
+        // ================= COMMANDS =================
         if (command === "ping") {
             return sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg });
-        }
-
-        // ================= GROUP ONLY =================
-
-        if (["tagall", "kick", "promote", "demote", "mute", "unmute", "del"].includes(command) && !isGroup) {
-            return sock.sendMessage(from, { text: "❌ This command only works in groups." }, { quoted: msg });
         }
 
         if (isGroup) {
             const groupMetadata = await sock.groupMetadata(from);
             const participants = groupMetadata.participants;
 
-            // ================= ADMINS DEBUG =================
-
-            if (command === "admins") {
-                let out = "👥 *Group Participants Debug:*\n\n";
-
-                for (let p of participants) {
-                    out += `ID: ${p.id}\n`;
-                    out += `  admin: ${p.admin}\n`;
-                    out += `  isSelf: ${p.isSelf}\n\n`;
-                }
-
-                return sock.sendMessage(from, { text: out });
-        
-            }
-        
-
-            // ======= LID-SAFE ADMIN DETECTION =======
-
-            // normalize bot phone jid (remove :device)
-            const botPhoneJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
-
-            // find sender participant (by LID id OR phoneNumber)
-            const senderRawJid = msg.key.participant || msg.key.remoteJid;
-            const senderId = jidToId(senderRawJid);
-
-            const senderParticipant = participants.find(p =>
-                jidToId(p.id) === senderId || jidToId(p.phoneNumber) === senderId
-            );                  
-
-            // find bot participant by phoneNumber (THIS IS THE KEY FIX)
-            const botParticipant = participants.find(p =>
-                p.phoneNumber && p.phoneNumber.split(":")[0] === botPhoneJid
-            );
-
-
-            // check admin flags
+            // Admin detection logic
+            const senderParticipant = participants.find(p => jidToId(p.id) === jidToId(whoRaw) || jidToId(p.phoneNumber) === jidToId(whoRaw));
             const isSenderAdmin = senderParticipant?.admin === "admin" || senderParticipant?.admin === "superadmin";
-            const isBotAdmin = botParticipant?.admin === "admin" || botParticipant?.admin === "superadmin";
-            
 
-            // Helpful short in-chat debug if admin check fails (temporary)
-            if (!isSenderAdmin) {
-                // include only minimal debug to avoid giant messages
-                return sock.sendMessage(from, {
-                    text: `❌ You must be admin to use this.\n\nDebug:\nsenderId: ${senderId}\nmatchedAdmin: ${senderParticipant?.admin ?? 'null'}`
-                }, { quoted: msg });
-            }
-            if (!isBotAdmin) {
-                return sock.sendMessage(from, {
-                    text: `❌ I must be admin to do this.\n\nDebug:\nbotId: ${botId}\nmatchedAdmin: ${botParticipant?.admin ?? 'null'}`
-                }, { quoted: msg });
-            }
-
-            // ================= TAGALL =================
-
-            if (command === "tagall") {
-                let text = "📢 *Tagging everyone:*\n\n";
-                let mentions = [];
-
-                for (let p of participants) {
-                    mentions.push(p.id);
-                    text += `@${p.id.split("@")[0]}\n`;
-                }
-
-                return sock.sendMessage(from, { text, mentions });
-            }
-
-            // ================= ADMIN CHECK =================
-
-            if (["kick", "promote", "demote", "mute", "unmute", "del"].includes(command)) {
-                if (!isSenderAdmin) {
-                    return sock.sendMessage(from, { text: "❌ You must be admin to use this." }, { quoted: msg });
-                }
-                if (!isBotAdmin) {
-                    return sock.sendMessage(from, { text: "❌ I must be admin to do this." }, { quoted: msg });
-                }
-            }
-
-            // ================= GET TARGET =================
-
-            let target =
-                msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.[0] ||
-                msg.message.extendedTextMessage?.contextInfo?.participant;
-
-            if (["kick", "promote", "demote", "mute", "unmute"].includes(command) && !target) {
-                return sock.sendMessage(from, { text: "❌ Tag or reply to someone." }, { quoted: msg });
-            }
-
-            // ================= DELETE MSG =================
-
-            if (command === "del") {
-                const quoted = msg.message.extendedTextMessage?.contextInfo?.stanzaId;
-
-                if (!quoted) {
-                    return sock.sendMessage(from, { text: "❌ Reply to a message you want to delete." }, { quoted: msg });
-                }
-
-                const participant = msg.message.extendedTextMessage.contextInfo.participant;    
-                await sock.sendMessage(from, {
-                    delete: {
-                        remoteJid: from,
-                        fromMe: false,
-                        id: quoted,
-                        participant: participant
+            // .active / .activity / .inactive commands
+            if (command === "active") {
+                const threshold = 5;
+                const days = getLastNDays(7);
+                const groupData = activityDB[from] || {};
+                let perUser = {};
+                for (let d of days) {
+                    if (!groupData[d]) continue;
+                    for (let uid in groupData[d]) {
+                        if (!perUser[uid]) perUser[uid] = 0;
+                        perUser[uid] += groupData[d][uid];
                     }
+                }
+
+                const activeList = Object.entries(perUser).filter(([uid, count]) => count >= threshold).sort((a, b) => b[1] - a[1]).slice(0, 10);
+                let outText = `✅ *Active members (>= ${threshold} msgs)*\n\n`;
+                let mentions = [];
+                activeList.forEach(([uid, count], i) => {
+                    const p = participants.find(p => jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid));
+                    const mentionJid = p ? (p.phoneNumber ? p.phoneNumber.split(":")[0] + "@s.whatsapp.net" : p.id) : `${uid}@s.whatsapp.net`;
+                    mentions.push(mentionJid);
+                    outText += `${i+1}. @${mentionJid.split("@")[0]} — ${count} msgs\n`;
                 });
-                return;
+                return sock.sendMessage(from, { text: outText, mentions }, { quoted: msg });
             }
-
-            // ================= MUTE =================
-
-            if (command === "mute") {
-                await sock.groupParticipantsUpdate(from, [target], "restrict");
-                return sock.sendMessage(from, { text: "🔇 User has been muted (restricted)." });
-            }
-
-            // ================= UNMUTE =================
-
-            if (command === "unmute") {
-                await sock.groupParticipantsUpdate(from, [target], "unrestrict");
-                return sock.sendMessage(from, { text: "🔊 User has been unmuted." });
-            }
-
-
-            // ================= KICK =================
-
-            if (command === "kick") {
-                await sock.groupParticipantsUpdate(from, [target], "remove");
-                return sock.sendMessage(from, { text: "✅ User removed." });
-            }
-
-            // ================= PROMOTE =================
-
-            if (command === "promote") {
-                await sock.groupParticipantsUpdate(from, [target], "promote");
-                return sock.sendMessage(from, { text: "✅ User promoted to admin." });
-            }
-
-            // ================= DEMOTE =================
-
-            if (command === "demote") {
-                await sock.groupParticipantsUpdate(from, [target], "demote");
-                return sock.sendMessage(from, { text: "✅ User demoted." });
-            }
-
-
-            // ================= IMG =================
-
-            if (command === "img") {
-	if (!args.length) {
-		await sock.sendMessage(from, { text: "❌ Usage: .img <query>" });
-		return;
-	}
-
-	const query = args.join(" ");
-
-	await sock.sendMessage(from, { text: `🔍 Searching images for: *${query}* ...` });
-
-	try {
-		const images = await imageSearch(query, 5);
-
-		for (const img of images) {
-			await sock.sendMessage(from, {
-				image: { url: img },
-				caption: `🖼️ Result for: *${query}*`
-			});
-			await sleep(700); // anti-spam delay
-		}
-	} catch (err) {
-		console.error("IMG ERROR:", err);
-		await sock.sendMessage(from, { text: "❌ No images found." });
-	}
-}
-
-
-
-
-
-
-
-            // ----------------- .active and .inactive -----------------
-if (command === "active") {
-    const threshold = 5;
-    const customMessage = args.join(" ").trim(); // optional message after .active
-
-    const days = getLastNDays(7);
-    const groupData = activityDB[from] || {};
-
-    // sum activity for last N days
-    let perUser = {};
-    let availableDays = 0;
-    for (let d of days) {
-        if (!groupData[d]) continue;
-        availableDays++;
-        for (let uid in groupData[d]) {
-            const c = groupData[d][uid];
-            if (!perUser[uid]) perUser[uid] = 0;
-            perUser[uid] += c;
-        }
-    }
-
-    // pick active users >= threshold, sort descending and take top 10
-    const activeList = Object.entries(perUser)
-        .filter(([uid, count]) => count >= threshold)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-
-    let text = `✅ *Active members (>= ${threshold} msgs in last 7 days)*\n\n`;
-    text += `📅 Data available for: ${availableDays} / 7 days\n\n`;
-
-    let mentions = [];
-
-    if (activeList.length === 0) {
-        text += "No active members found (yet).";
-        // send without mentions
-        return sock.sendMessage(from, { text }, { quoted: msg });
-    }
-
-    // build lines and mentions
-    let i = 0;
-    for (let [uid, count] of activeList) {
-        i++;
-        // find participant entry (match by LID id or phoneNumber id)
-        const p = participants.find(p =>
-            jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid)
-        );
-
-        if (p) {
-            // prefer phoneJid when available, normalized
-            const raw = p.phoneNumber ? p.phoneNumber.split(":")[0] : p.id;
-            const mentionJid = raw.includes("@") ? raw : `${raw}@s.whatsapp.net`;
-            mentions.push(mentionJid);
-
-            const num = mentionJid.split("@")[0].split(":")[0];
-            text += `${i}. @${num} — ${count} msgs\n`;
-        } else {
-            text += `${i}. ${uid} — ${count} msgs\n`;
-        }
-    }
-
-    if (customMessage) {
-        text += `\n📣 Message:\n${customMessage}`;
-    }
-
-    return sock.sendMessage(from, { text, mentions }, { quoted: msg });
-}
-
-if (command === "inactive") {
-    const threshold = 5;
-    const customMessage = args.join(" ").trim(); // optional message after .inactive
-
-    const days = getLastNDays(7);
-    const groupData = activityDB[from] || {};
-
-    // sum activity for last N days
-    let perUser = {};
-    let availableDays = 0;
-    for (let d of days) {
-        if (!groupData[d]) continue;
-        availableDays++;
-        for (let uid in groupData[d]) {
-            const c = groupData[d][uid];
-            if (!perUser[uid]) perUser[uid] = 0;
-            perUser[uid] += c;
-        }
-    }
-
-    // collect all participants' numeric ids (the keys used in perUser)
-    const allMemberIds = participants.map(p => {
-        // prefer numeric id from p.id or p.phoneNumber
-        const idFromP = jidToId(p.id);
-        if (idFromP) return idFromP;
-        if (p.phoneNumber) return jidToId(p.phoneNumber);
-        return null;
-    }).filter(Boolean);
-
-    // determine inactive members (< threshold)
-    const inactive = [];
-    for (let uid of allMemberIds) {
-        // skip the bot itself
-        if (uid === jidToId(sock.user.id)) continue;
-
-        const count = perUser[uid] || 0;
-        if (count < threshold) {
-            inactive.push({ uid, count });
-        }
-    }
-
-    // sort by ascending message count (least active first)
-    inactive.sort((a, b) => a.count - b.count);
-
-    let text = `⚠️ *Inactive members (< ${threshold} msgs in last 7 days)*\n\n`;
-    text += `📅 Data available for: ${availableDays} / 7 days\n\n`;
-
-    if (inactive.length === 0) {
-        text += "No inactive members found.";
-        return sock.sendMessage(from, { text }, { quoted: msg });
-    }
-
-    // build mentions and listing
-    let mentions = [];
-    let idx = 0;
-    for (let entry of inactive) {
-        idx++;
-        const uid = entry.uid;
-        const count = entry.count;
-
-        // find participant object
-        const p = participants.find(p =>
-            jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid)
-        );
-
-        if (p) {
-            const raw = p.phoneNumber ? p.phoneNumber.split(":")[0] : p.id;
-            const mentionJid = raw.includes("@") ? raw : `${raw}@s.whatsapp.net`;
-            mentions.push(mentionJid);
-
-            const num = mentionJid.split("@")[0].split(":")[0];
-            text += `${idx}. @${num} — ${count} msgs\n`;
-        } else {
-            text += `${idx}. ${uid} — ${count} msgs\n`;
-        }
-    }
-
-    if (customMessage) {
-        text += `\n📣 Message to inactive members:\n${customMessage}`;
-    }
-
-    return sock.sendMessage(from, { text, mentions }, { quoted: msg });
-}
-
-
-
-
-
-
-
-            // ==================== ACTIVITY =================
 
             if (command === "activity") {
-				const days = getLastNDays(7);
-				const groupData = activityDB[from] || {};
+                const days = getLastNDays(7);
+                const groupData = activityDB[from] || {};
+                let total = 0, perUser = {};
+                days.forEach(d => {
+                    if (groupData[d]) {
+                        Object.entries(groupData[d]).forEach(([uid, count]) => {
+                            total += count;
+                            perUser[uid] = (perUser[uid] || 0) + count;
+                        });
+                    }
+                });
+                const sorted = Object.entries(perUser).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                let outText = `📊 *Group Activity Report*\n💬 Total: ${total}\n\n🔥 *Top Members:*\n`;
+                let mentions = [];
+                sorted.forEach(([uid, count]) => {
+                    const p = participants.find(p => jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid));
+                    const mentionJid = p ? (p.phoneNumber ? p.phoneNumber.split(":")[0] + "@s.whatsapp.net" : p.id) : `${uid}@s.whatsapp.net`;
+                    mentions.push(mentionJid);
+                    outText += `• @${mentionJid.split("@")[0]} : ${count}\n`;
+                });
+                return sock.sendMessage(from, { text: outText, mentions });
+            }
 
-				let total = 0;
-				let perUser = {};
-				let availableDays = 0;
-
-				for (let d of days) {
-					if (!groupData[d]) continue;
-					availableDays++;
-
-					for (let uid in groupData[d]) {
-						const c = groupData[d][uid];
-						total += c;
-						if (!perUser[uid]) perUser[uid] = 0;
-						perUser[uid] += c;
-					}
-				}
-
-				const sorted = Object.entries(perUser)
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 5);
-
-				let text = `📊 *Group Activity Report*\n\n`;
-				text += `📅 Data available for: ${availableDays} / 7 days\n`;
-				text += `💬 Total messages (last ${availableDays} days): ${total}\n\n`;
-				text += `🔥 *Top Active Members:*\n\n`;
-
-				// **ONE** mentions array (do NOT redeclare it elsewhere)
-				let mentions = [];
-
-				if (sorted.length === 0) {
-					text += "No data yet.";
-				} else {
-					for (let [uid, count] of sorted) {
-						// find participant entry (match by LID id or phoneNumber id)
-						const p = participants.find(p =>
-							jidToId(p.id) === uid || (p.phoneNumber && jidToId(p.phoneNumber) === uid)
-						);
-
-						if (p) {
-							// Prefer real phone JID when available.
-							// Normalize away any :device suffix so WhatsApp resolves it correctly.
-							let raw = p.phoneNumber ? p.phoneNumber.split(":")[0] : p.id;
-							// If raw doesn't contain @domain, append @s.whatsapp.net
-							const mentionJid = raw.includes("@") ? raw : `${raw}@s.whatsapp.net`;
-
-							mentions.push(mentionJid);
-
-							const num = mentionJid.split("@")[0].split(":")[0];
-							text += `• @${num} : ${count} msgs\n`;
-						} else {
-							// fallback if participant object not found
-							text += `• ${uid} : ${count} msgs\n`;
-						}
-					}
-				}
-
-				// send with the single, correctly filled mentions array
-				return sock.sendMessage(from, { text, mentions });
-			}
-
-
-            // ================= .std - Spot The Difference =================
-if (command === "std") {
-  try {
-    // DETERMINE phone number of the user (same logic as .give)
-    let who = msg.key.participant || msg.key.remoteJid;
-    let senderNum = who.split('@')[0].split(':')[0];
-
-    if (isGroup) {
-      const groupMetadata = await sock.groupMetadata(from);
-      const participant = groupMetadata.participants.find(p => p.id === who);
-      if (participant && participant.phoneNumber) {
-        senderNum = participant.phoneNumber.split('@')[0].split(':')[0];
-      }
-    }
-
-    // registration check: try a light call to getBalance to ensure user exists
-    try {
-      await getBalance(senderNum); // will throw if not registered (your db.js likely does)
-    } catch (err) {
-      await sock.sendMessage(from, { text: "❌ You must register first on the website to play .std." }, { quoted: msg });
-      return;
-    }
-
-    // cooldown check
-    const last = lastStdCompleted.get(senderNum) || 0;
-    const since = Date.now() - last;
-    if (since < STD_COOLDOWN_MS) {
-      const remainingMs = STD_COOLDOWN_MS - since;
-      const remainSec = Math.ceil(remainingMs / 1000);
-      await sock.sendMessage(from, { text: `⏳ Cooldown active. Try again in ${remainSec}s.` }, { quoted: msg });
-      return;
-    }
-
-    // check if they already have an active game
-    if (activeStdGames.has(senderNum)) {
-      await sock.sendMessage(from, { text: "⚠️ You already have an active .std game — reply with the odd emoji to answer." }, { quoted: msg });
-      return;
-    }
-
-    // start the game
-    const { A, B } = startStdGame(senderNum, from);
-    const instruction = `🔎 *Spot the Difference*\nReply with the *odd* emoji (just paste the emoji) as fast as you can!\nReward: 60 - seconds_taken (minimum §1)\nCooldown after answering: 2 minutes\n\n${A}\n${B}`;
-
-    await sock.sendMessage(from, { text: instruction }, { quoted: msg });
-  } catch (err) {
-    if (err.message === "ALREADY_ACTIVE") {
-      await sock.sendMessage(from, { text: "⚠️ You already have an active game — reply with the odd emoji." }, { quoted: msg });
-    } else {
-      console.error(".std ERROR:", err);
-      await sock.sendMessage(from, { text: `❌ Error starting .std: ${err.message}` }, { quoted: msg });
-    }
-  }
-}
-
-            
-
-            //=============== ECONOMY TESTING =================
-            if (command === "give") {
-                //console.log("DEBUG: Attempting .give for number:", senderNumber); // ADD THIS LINE
+            // --- 🔎 STD COMMAND (.std) ---
+            if (command === "std") {
                 try {
-                    const amount = Number(args[0]) || 0;
-                    if (amount <= 0) {
-                        return sock.sendMessage(from, { text: "❌ Invalid amount" });
+                    await getBalance(senderNum); 
+                    const last = lastStdCompleted.get(senderNum) || 0;
+                    if (Date.now() - last < STD_COOLDOWN_MS) {
+                        return sock.sendMessage(from, { text: `⏳ Cooldown active. Try again in ${Math.ceil((STD_COOLDOWN_MS - (Date.now() - last)) / 1000)}s.` }, { quoted: msg });
                     }
-
-                    // BETTER SENDER DETECTION
-                    let who = msg.key.participant || msg.key.remoteJid;
-                    let senderNum = who.split('@')[0].split(':')[0];
-
-                    // If it's a group, try to find the real phone number from participants
-                    if (isGroup) {
-                        const groupMetadata = await sock.groupMetadata(from);
-                        const participant = groupMetadata.participants.find(p => p.id === who);
-                        if (participant && participant.phoneNumber) {
-                            senderNum = participant.phoneNumber.split('@')[0].split(':')[0];
-                        }
-                    }
-
-                    console.log("DEBUG: Final senderNumber being sent to DB:", senderNum);
-
-                    const newBalance = await addCoins(senderNum, amount);
-
-                    await sock.sendMessage(from, {
-                        text: `💰 You received §${amount} Sigils\n🔥 New Balance: §${newBalance}`,
-                    });
+                    const { A, B } = startStdGame(senderNum, from, sock);
+                    await sock.sendMessage(from, { text: `🔎 *Spot the Difference*\nReply with the *odd* emoji!\n\n${A}\n${B}` }, { quoted: msg });
                 } catch (err) {
-                    await sock.sendMessage(from, {
-                        text: `❌ ${err.message}`,
-                    });
+                    const msgText = /not registered/i.test(err.message) ? "❌ Register first to play." : `❌ ${err.message}`;
+                    await sock.sendMessage(from, { text: msgText }, { quoted: msg });
                 }
             }
 
+            // --- 💰 GIVE COMMAND (.give) ---
+            if (command === "give") {
+                try {
+                    const amount = Number(args[0]) || 0;
+                    if (amount <= 0) return sock.sendMessage(from, { text: "❌ Invalid amount" });
+                    const newBalance = await addCoins(senderNum, amount);
+                    await sock.sendMessage(from, { text: `💰 Success!\n🔥 New Balance: §${newBalance}` });
+                } catch (err) { await sock.sendMessage(from, { text: `❌ ${err.message}` }); }
+            }
 
-
-
-
+            // .img search
+            if (command === "img") {
+                if (!args.length) return sock.sendMessage(from, { text: "❌ Usage: .img <query>" });
+                const query = args.join(" ");
+                await sock.sendMessage(from, { text: `🔍 Searching for: *${query}*` });
+                try {
+                    const images = await imageSearch(query, 5);
+                    for (const img of images) {
+                        await sock.sendMessage(from, { image: { url: img }, caption: `🖼️ *${query}*` });
+                        await sleep(700);
+                    }
+                } catch (err) { await sock.sendMessage(from, { text: "❌ No images found." }); }
+            }
         }
-
     });
 }
-
-
 
 startBot();
