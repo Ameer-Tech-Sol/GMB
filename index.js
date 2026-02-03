@@ -314,6 +314,8 @@ Before you vanish into the madness, present yourself, warrior:
 
         let sender = msg.key.participant || msg.key.remoteJid;
         sender = sender.split(":")[0] + "@s.whatsapp.net";
+        const senderNumber = sender.split("@")[0];
+
 
 
         const text =
