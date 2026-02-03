@@ -25,6 +25,42 @@ function pickRandom(arr, n = 5) {
 	return arr.sort(() => 0.5 - Math.random()).slice(0, n);
 }
 
+
+// ================= FARMING ENGINE (FTD) =================
+const FTD_SESSIONS = new Map(); 
+const FTD_COOLDOWNS = new Map();
+
+const EMOJI_POOL = ["🍥", "🔥", "🥊", "⚡", "🐉", "💧", "🌀", "✨", "🍀", "💎", "🍎", "⚔️", "👑", "🦊", "🌌", "👺"];
+
+function generateFtdStrings(length = 8) {
+    // Pick random emojis for String A
+    let strA = [];
+    for (let i = 0; i < length; i++) {
+        strA.push(EMOJI_POOL[Math.floor(Math.random() * EMOJI_POOL.length)]);
+    }
+
+    // Clone String A to B
+    let strB = [...strA];
+    
+    // Pick a random index to change
+    const diffIndex = Math.floor(Math.random() * length);
+    
+    // Pick a new emoji that is NOT the same as the original
+    let diffEmoji;
+    do {
+        diffEmoji = EMOJI_POOL[Math.floor(Math.random() * EMOJI_POOL.length)];
+    } while (diffEmoji === strA[diffIndex]);
+
+    strB[diffIndex] = diffEmoji;
+
+    return {
+        stringA: strA.join(""),
+        stringB: strB.join(""),
+        correctEmoji: diffEmoji
+    };
+}
+
+
 // ---------- Pinterest JSON search ----------
 async function searchPinterest(query) {
 	const url = `https://www.pinterest.com/resource/BaseSearchResource/get/?source_url=/search/pins/?q=${encodeURIComponent(query)}&data=${encodeURIComponent(JSON.stringify({
@@ -748,6 +784,77 @@ if (command === "inactive") {
 				// send with the single, correctly filled mentions array
 				return sock.sendMessage(from, { text, mentions });
 			}
+
+            // ================= FTD ANSWER CHECKER =================
+    if (FTD_SESSIONS.has(senderNum)) {
+        const session = FTD_SESSIONS.get(senderNum);
+        
+        if (text.trim() === session.correctEmoji) {
+            const timeTaken = Math.floor((Date.now() - session.startTime) / 1000);
+            const reward = Math.max(0, 60 - timeTaken);
+
+            try {
+                // Update Database
+                const newBalance = await addCoins(senderNum, reward);
+                
+                await sock.sendMessage(from, { 
+                    text: `🎯 *CORRECT!* 🎯\n\n⏱️ Time: ${timeTaken}s\n💰 Reward: §${reward} Sigils\n🔥 Balance: §${newBalance}\n\n*Cooldown:* 2 minutes.` 
+                }, { quoted: msg });
+
+            } catch (err) {
+                await sock.sendMessage(from, { text: `❌ DB Error: ${err.message}` });
+            }
+
+            // Cleanup session and start cooldown
+            FTD_SESSIONS.delete(senderNum);
+            FTD_COOLDOWNS.set(senderNum, Date.now() + 120000); // 2 mins
+            return;
+        } 
+        // Optional: If they guess wrong, they can try again until they get it or the session expires
+    }
+
+    if (!text.startsWith(PREFIX)) return;
+    const args = text.slice(1).trim().split(/\s+/);
+    const command = args.shift().toLowerCase();
+
+    // ================= FTD COMMAND =================
+    if (command === "ftd") {
+        // 1. Check Cooldown
+        if (FTD_COOLDOWNS.has(senderNum)) {
+            const expiration = FTD_COOLDOWNS.get(senderNum);
+            const now = Date.now();
+            if (now < expiration) {
+                const remaining = Math.ceil((expiration - now) / 1000);
+                return sock.sendMessage(from, { 
+                    text: `⏳ *Patience, Warrior!*\n\nYour energy is depleted. Wait *${remaining}s* before farming again.` 
+                }, { quoted: msg });
+            }
+        }
+
+        // 2. Prevent duplicate sessions
+        if (FTD_SESSIONS.has(senderNum)) return;
+
+        // 3. Generate Game
+        const { stringA, stringB, correctEmoji } = generateFtdStrings(10);
+        
+        FTD_SESSIONS.set(senderNum, {
+            correctEmoji,
+            startTime: Date.now()
+        });
+
+        const gameText = 
+`⚔️ *SPOT THE DIFFERENCE* ⚔️
+
+Find the emoji in the second line that is *NOT* in the first line!
+
+🅰️: ${stringA}
+🅱️: ${stringB}
+
+*Quick! Type the odd emoji to claim your Sigils!* 🪙`;
+
+        return sock.sendMessage(from, { text: gameText }, { quoted: msg });
+    }
+            
 
             //=============== ECONOMY TESTING =================
             if (command === "give") {
