@@ -746,15 +746,7 @@ if (command === "inactive") {
 				return sock.sendMessage(from, { text, mentions });
 			}
 
-
-
-
-        }
-
-    });
-}
-
-//=============== ECONOMY TESTING =================
+            //=============== ECONOMY TESTING =================
 if (command === "give") {
   try {
     const amount = Number(args[0]) || 0;
@@ -773,6 +765,16 @@ if (command === "give") {
     });
   }
 }
+
+
+
+
+
+        }
+
+    });
+}
+
 
 
 startBot();
